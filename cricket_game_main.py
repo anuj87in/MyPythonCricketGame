@@ -2,6 +2,10 @@ import os
 import random
 import time
 import sys
+import threading
+import time
+import csv
+from datetime import datetime
 
 '''
 CRICKET GAME ENHANCEMENTS:
@@ -200,6 +204,773 @@ TEAM_CONFIGS = {
     }
 }
 
+
+FAST_AUTOPLAY = False  # Default value
+
+if len(sys.argv) > 1:
+    if sys.argv[1].lower() in ['true', '1', 'yes', 'y', 'fast', 'auto']:
+        FAST_AUTOPLAY = True
+        print("🚀 FAST AUTOPLAY MODE ENABLED via command line!")
+    elif sys.argv[1].lower() in ['false', '0', 'no', 'n', 'normal']:
+        FAST_AUTOPLAY = False
+        print("🎮 NORMAL MODE ENABLED via command line!")
+    else:
+        print(f"⚠️ Unknown parameter '{sys.argv[1]}'. Using default: NORMAL MODE")
+        print("Valid options: true/false, 1/0, yes/no, y/n, fast/normal, auto")
+
+def smart_sleep(seconds):
+    """Sleep only if not in fast autoplay mode"""
+    if not FAST_AUTOPLAY:
+        time.sleep(seconds)
+
+def log_match_result(eng_score, eng_wickets, nz_score, nz_wickets, winner):
+    
+    """Log match result to CSV file with simple format: Date,ENG,NZ,Winner"""
+    full_timestamp = int(time.time() * 1000)  # Current time in milliseconds
+    game_id = full_timestamp % 10000000  # Get last 7 digits (modulo 10,000,000)
+
+    # Create the match result data (date/time when CSV is written)
+    match_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    eng_result = f"{eng_score} for {eng_wickets}"
+    nz_result = f"{nz_score} for {nz_wickets}"
+    
+    # Prepare the row data
+    match_data = [match_date, eng_result, nz_result, winner,game_id]
+    
+    # File name for the CSV
+    csv_filename = "cricket_match_results.csv"
+    
+    try:
+        # Check if file exists to determine if we need headers
+        file_exists = False
+        try:
+            with open(csv_filename, 'r') as f:
+                file_exists = True
+        except FileNotFoundError:
+            file_exists = False
+        
+        # Write to CSV file
+        with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            # Write header if file is new
+            if not file_exists:
+                writer.writerow(['Date', 'ENG', 'NZ', 'Winner','Game_ID'])
+                print(f"\n📊 Created new match results file: {csv_filename}")
+            
+            # Write the match data
+            writer.writerow(match_data)
+            print(f"📊 Match result logged: {match_date} | ENG: {eng_result} | NZ: {nz_result} | Winner: {winner} | Game_ID: {game_id}")
+            
+    except Exception as e:
+        print(f"⚠️ Error logging match result: {e}")
+        print("Match will continue, but result won't be saved to file.")
+
+
+def display_batting_team_for_selection(role_name, selected_batsmen_choices=None):
+    """Display batting team with clear indicators for already selected players"""
+    global batting_team_squad, Batting_Team_Name, innings
+    
+    if selected_batsmen_choices is None:
+        selected_batsmen_choices = []
+    
+    print("\n" + "="*80)
+    print(f"🏏 INNINGS {innings} - {role_name.upper()} SELECTION")
+    print(f"🏏 {Batting_Team_Name.upper()} BATTING SQUAD")
+    print("="*80)
+    
+    for player_no in range(len(batting_team_squad)):
+        player_name = batting_team_squad[player_no]
+        player_stats = COMPLETE_PLAYER_STATS.get(player_name, {})
+        choice_number = player_no + 1
+        
+        # Get player info
+        player_type = player_stats.get("player_type", "unknown")
+        is_captain = player_stats.get("is_captain", False)
+        is_keeper = player_stats.get("is_wicket_keeper", False)
+        
+        # Create status indicators
+        status = ""
+        if is_captain:
+            status += " (C)"
+        if is_keeper:
+            status += " (WK)"
+        if player_type == "all_rounder":
+            status += " (AR)"
+        elif player_type == "bowler":
+            status += " (BWL)"
+        elif player_type == "batsman":
+            status += " (BAT)"
+        
+        # Check if player is already selected
+        if choice_number in selected_batsmen_choices:
+            # Find which role this player was selected for
+            role_selected = ""
+            if len(selected_batsmen_choices) >= 1 and choice_number == selected_batsmen_choices[0]:
+                role_selected = "STRIKE BATSMAN"
+            elif len(selected_batsmen_choices) >= 2 and choice_number == selected_batsmen_choices[1]:
+                role_selected = "NON-STRIKE BATSMAN"
+            else:
+                role_selected = "SELECTED"
+            
+            # Display with cross (unavailable)
+            print(f"❌ {choice_number:2d}. {player_name:<20} {status} - ALREADY CHOSEN AS {role_selected}")
+        else:
+            # Available for selection - show with tick
+            recommendation = ""
+            if player_type == "batsman":
+                recommendation = " ⭐ RECOMMENDED"
+            elif player_type == "all_rounder":
+                recommendation = " 💡 GOOD OPTION"
+            elif player_type == "bowler":
+                recommendation = " ❓ UNUSUAL CHOICE"
+            
+            print(f"✅ {choice_number:2d}. {player_name:<20} {status}{recommendation}")
+    
+    print("="*80)
+    print("Legend: (C) = Captain, (WK) = Wicket Keeper, (AR) = All Rounder")
+    print("        (BAT) = Batsman, (BWL) = Bowler")
+    print("✅ = Available for selection | ❌ = Already selected")
+    print("⭐ = Best choice | 💡 = Good choice | ❓ = Unusual choice")
+    print("="*80)
+
+def display_bowling_team_for_selection():
+    """Display bowling team for bowler selection"""
+    global bowling_team_squad, Bowling_Team_Name, innings
+    
+    print("\n" + "="*80)
+    print(f"🏏 INNINGS {innings} - SUPER OVER BOWLER SELECTION")
+    print(f"🏏 {Bowling_Team_Name.upper()} BOWLING SQUAD")
+    print("="*80)
+    
+    for player_no in range(len(bowling_team_squad)):
+        player_name = bowling_team_squad[player_no]
+        player_stats = COMPLETE_PLAYER_STATS.get(player_name, {})
+        
+        # Get player info
+        player_type = player_stats.get("player_type", "unknown")
+        is_captain = player_stats.get("is_captain", False)
+        is_keeper = player_stats.get("is_wicket_keeper", False)
+        
+        # Create status indicators
+        status = ""
+        if is_captain:
+            status += " (C)"
+        if is_keeper:
+            status += " (WK)"
+        if player_type == "all_rounder":
+            status += " (AR)"
+        elif player_type == "bowler":
+            status += " (BWL)"
+        elif player_type == "batsman":
+            status += " (BAT)"
+        
+        # Add bowling recommendation
+        recommendation = ""
+        if player_type == "bowler":
+            recommendation = " ⭐ RECOMMENDED"
+        elif player_type == "all_rounder":
+            recommendation = " 💡 GOOD OPTION"
+        elif is_keeper:
+            recommendation = " ⚠️ WICKET-KEEPER (will need replacement)"
+        else:
+            recommendation = " ❓ UNUSUAL CHOICE"
+        
+        # All bowlers are available (no crosses needed)
+        print(f"✅ {player_no + 1:2d}. {player_name:<20} {status}{recommendation}")
+    
+    print("="*80)
+    print("Legend: (C) = Captain, (WK) = Wicket Keeper, (AR) = All Rounder")
+    print("        (BAT) = Batsman, (BWL) = Bowler")
+    print("⭐ = Best choice | 💡 = Good choice | ⚠️ = Special consideration | ❓ = Unusual")
+    print("="*80)
+
+
+def validate_user_choice_with_display(role_name, team_name, selected_batsmen_choices=None):
+    """Enhanced validation with timer that properly handles invalid inputs"""
+    global user_choice
+    
+    choice_accepted = False
+    
+    while not choice_accepted:
+        try:
+            # Show appropriate display based on role
+            if "Bowler" in role_name:
+                display_bowling_team_for_selection()
+                max_choice = len(bowling_team_squad)
+                
+                # Get suggested bowler (first bowler in list)
+                suggested_choice = 1
+                for i, player in enumerate(bowling_team_squad):
+                    player_stats = COMPLETE_PLAYER_STATS.get(player, {})
+                    if player_stats.get("player_type") == "bowler":
+                        suggested_choice = i + 1
+                        break
+                
+                player_name = bowling_team_squad[suggested_choice - 1]
+                print(f"\n💡 Our suggestion: Option {suggested_choice} - {player_name}")
+                
+            else:
+                # For batsmen, show batting team with selection indicators
+                display_batting_team_for_selection(role_name, selected_batsmen_choices or [])
+                max_choice = len(batting_team_squad)
+                
+                # Get suggested batsman (first available batsman)
+                suggested_choice = 1
+                excluded_choices = selected_batsmen_choices or []
+                
+                for i, player in enumerate(batting_team_squad):
+                    if (i + 1) not in excluded_choices:
+                        player_stats = COMPLETE_PLAYER_STATS.get(player, {})
+                        if player_stats.get("player_type") in ["batsman", "all_rounder"]:
+                            suggested_choice = i + 1
+                            break
+                
+                # If no batsman found, find any available player
+                if suggested_choice in excluded_choices:
+                    for i in range(len(batting_team_squad)):
+                        if (i + 1) not in excluded_choices:
+                            suggested_choice = i + 1
+                            break
+                
+                player_name = batting_team_squad[suggested_choice - 1]
+                print(f"\n💡 Our suggestion: Option {suggested_choice} - {player_name}")
+            
+            # FIXED TIMER INPUT - Reset for each attempt
+            user_choice = universal_timed_input(
+                f"\nSelect {role_name} for {team_name} (1-{max_choice}) [Auto-select in 15s]: ",
+                timeout=15,
+                default_value=suggested_choice,
+                input_type="number"
+            )
+            
+            # Validate the choice
+            if 1 <= user_choice <= max_choice:
+                # For batsmen, check if already selected
+                if "Bowler" not in role_name and selected_batsmen_choices and user_choice in selected_batsmen_choices:
+                    print(f"\n❌ ERROR: Player {user_choice} already selected! Please choose a different player.")
+                    print("⏰ Restarting selection in 3 seconds...")
+                    smart_sleep(3)
+                    # Continue the loop - timer will reset for next attempt
+                    continue
+                else:
+                    choice_accepted = True
+                    selected_player = batting_team_squad[user_choice - 1] if "Bowler" not in role_name else bowling_team_squad[user_choice - 1]
+                    print(f"\n✅ Valid selection: {user_choice} - {selected_player}")
+            else:
+                print(f"\n❌ ERROR: Invalid choice {user_choice}! Please enter a number between 1 and {max_choice}")
+                print("⏰ Restarting selection in 3 seconds...")
+                smart_sleep(3)
+                # Continue the loop - timer will reset for next attempt
+                
+        except (ValueError, TypeError):
+            print(f"\n❌ ERROR: Invalid input! Please enter a valid number between 1 and {max_choice}")
+            print("⏰ Restarting selection in 3 seconds...")
+            smart_sleep(3)
+            # Continue the loop - timer will reset for next attempt
+        except KeyboardInterrupt:
+            print(f"\n\n🚫 Game interrupted by user. Exiting...")
+            sys.exit()
+
+def team_diplay():
+    """Initialize team squads based on innings"""
+    global batting_team_squad, bowling_team_squad, Batting_Team_Name, Bowling_Team_Name
+    
+    # Use team configurations from TEAM_CONFIGS
+    if innings == 1:
+        # First innings: England bats, New Zealand bowls
+        Batting_Team_Name = 'England'
+        Bowling_Team_Name = 'New Zealand'
+        batting_team_squad = TEAM_CONFIGS["England"]["finals_xi"].copy()
+        bowling_team_squad = TEAM_CONFIGS["New Zealand"]["finals_xi"].copy()
+    else:
+        # Second innings: New Zealand bats, England bowls
+        Batting_Team_Name = 'New Zealand'
+        Bowling_Team_Name = 'England'
+        batting_team_squad = TEAM_CONFIGS["New Zealand"]["finals_xi"].copy()
+        bowling_team_squad = TEAM_CONFIGS["England"]["finals_xi"].copy()
+
+    # Just show a brief header - detailed display will be handled by selection functions
+    print("\n" + "="*100)
+    print("CRICKET WORLD CUP 2019 FINAL - SUPER OVER".center(100))
+    print("="*100)
+    print(f"\n🏏 INNINGS {innings}: {Batting_Team_Name.upper()} BATTING vs {Bowling_Team_Name.upper()} BOWLING")
+    print("="*100)
+def display_batting_team_for_selection(role_name, selected_batsmen_choices=None):
+    """Display batting team with clear indicators and unique player suggestions"""
+    global batting_team_squad, Batting_Team_Name, innings
+    
+    if selected_batsmen_choices is None:
+        selected_batsmen_choices = []
+    
+    print("\n" + "="*80)
+    print(f"🏏 INNINGS {innings} - {role_name.upper()} SELECTION")
+    print(f"🏏 {Batting_Team_Name.upper()} BATTING SQUAD")
+    print("="*80)
+    
+    for player_no in range(len(batting_team_squad)):
+        player_name = batting_team_squad[player_no]
+        player_stats = COMPLETE_PLAYER_STATS.get(player_name, {})
+        choice_number = player_no + 1
+        
+        # Get player info
+        player_type = player_stats.get("player_type", "unknown")
+        is_captain = player_stats.get("is_captain", False)
+        is_keeper = player_stats.get("is_wicket_keeper", False)
+        
+        # Create status indicators
+        status = ""
+        if is_captain:
+            status += " (C)"
+        if is_keeper:
+            status += " (WK)"
+        if player_type == "all_rounder":
+            status += " (AR)"
+        elif player_type == "bowler":
+            status += " (BWL)"
+        elif player_type == "batsman":
+            status += " (BAT)"
+        
+        # Check if player is already selected
+        if choice_number in selected_batsmen_choices:
+            # Find which role this player was selected for
+            role_selected = ""
+            if len(selected_batsmen_choices) >= 1 and choice_number == selected_batsmen_choices[0]:
+                role_selected = "STRIKE BATSMAN"
+            elif len(selected_batsmen_choices) >= 2 and choice_number == selected_batsmen_choices[1]:
+                role_selected = "NON-STRIKE BATSMAN"
+            else:
+                role_selected = "SELECTED"
+            
+            # Display with cross (unavailable) - use the space for role info
+            print(f"❌ {choice_number:2d}. {player_name:<20} {status:<15} - {role_selected}")
+        else:
+            # Available for selection - show unique suggestion for this player
+            suggestion = get_unique_player_suggestion(player_name, role_name)
+            print(f"✅ {choice_number:2d}. {player_name:<20} {status:<15} - {suggestion}")
+    
+    print("="*80)
+    print("Legend: (C) = Captain, (WK) = Wicket Keeper, (AR) = All Rounder")
+    print("        (BAT) = Batsman, (BWL) = Bowler")
+    print("✅ = Available for selection | ❌ = Already selected")
+    print("="*80)
+
+
+
+def display_bowling_team_for_selection():
+    """Display bowling team with unique suggestions for each bowler"""
+    global bowling_team_squad, Bowling_Team_Name, innings
+    
+    print("\n" + "="*80)
+    print(f"🏏 INNINGS {innings} - SUPER OVER BOWLER SELECTION")
+    print(f"🏏 {Bowling_Team_Name.upper()} BOWLING SQUAD")
+    print("="*80)
+    
+    for player_no in range(len(bowling_team_squad)):
+        player_name = bowling_team_squad[player_no]
+        player_stats = COMPLETE_PLAYER_STATS.get(player_name, {})
+        
+        # Get player info
+        player_type = player_stats.get("player_type", "unknown")
+        is_captain = player_stats.get("is_captain", False)
+        is_keeper = player_stats.get("is_wicket_keeper", False)
+        
+        # Create status indicators
+        status = ""
+        if is_captain:
+            status += " (C)"
+        if is_keeper:
+            status += " (WK)"
+        if player_type == "all_rounder":
+            status += " (AR)"
+        elif player_type == "bowler":
+            status += " (BWL)"
+        elif player_type == "batsman":
+            status += " (BAT)"
+        
+        # Get unique suggestion for this bowler
+        suggestion = get_unique_bowler_suggestion(player_name)
+        
+        # All bowlers are available (no crosses needed)
+        print(f"✅ {player_no + 1:2d}. {player_name:<20} {status:<15} - {suggestion}")
+    
+    print("="*80)
+    print("Legend: (C) = Captain, (WK) = Wicket Keeper, (AR) = All Rounder")
+    print("        (BAT) = Batsman, (BWL) = Bowler")
+    print("✅ = Available for selection | ❌ = Already selected")
+    print("="*80)
+
+def get_unique_player_suggestion(player_name, role_name):
+    """Get unique, specific suggestion for each player based on their real strengths"""
+    player_stats = COMPLETE_PLAYER_STATS.get(player_name, {})
+    
+    # England players
+    if player_name == "Jason Roy":
+        if "striker" in role_name.lower():
+            return "⭐ PERFECT - Explosive opener, ideal for strike"
+        else:
+            return "💡 GOOD - Aggressive style suits any batting role"
+    
+    elif player_name == "Jonny Bairstow":
+        if "striker" in role_name.lower():
+            return "⭐ EXCELLENT - Fearless aggressor, loves pressure"
+        else:
+            return "💡 SOLID - Reliable under pressure"
+    
+    elif player_name == "Joe Root":
+        if "non" in role_name.lower():
+            return "⭐ IDEAL - Master of singles, perfect anchor"
+        elif "third" in role_name.lower():
+            return "💡 RELIABLE - Calm finisher, rarely panics"
+        else:
+            return "💡 DEPENDABLE - Technique to handle any situation"
+    
+    elif player_name == "Eoin Morgan":
+        if "third" in role_name.lower():
+            return "⭐ CAPTAIN'S CHOICE - Ultimate finisher, ice-cool"
+        else:
+            return "💡 LEADER - Captain's experience invaluable"
+    
+    elif player_name == "Ben Stokes":
+        if "third" in role_name.lower():
+            return "⭐ MATCH-WINNER - Thrives in do-or-die moments"
+        else:
+            return "💡 HERO - Can turn impossible into possible"
+    
+    elif player_name == "Jos Buttler":
+        if "striker" in role_name.lower():
+            return "⭐ DESTROYER - 360° shots, can hit anywhere"
+        elif "third" in role_name.lower():
+            return "⭐ FINISHER - Best death-over batsman in world"
+        else:
+            return "💡 GENIUS - Innovative shots, game-changer"
+    
+    elif player_name == "Chris Woakes":
+        return "⚠️ UNUSUAL - Bowler first, limited batting ability"
+    
+    elif player_name == "Liam Plunkett":
+        return "⚠️ RISKY - Tail-ender, very limited batting"
+    
+    elif player_name == "Jofra Archer":
+        return "⚠️ TAIL-ENDER - Can hit big but very risky"
+    
+    elif player_name == "Adil Rashid":
+        return "⚠️ BOWLER - Minimal batting skills"
+    
+    elif player_name == "Mark Wood":
+        return "⚠️ LAST RESORT - Pure bowler, can't bat"
+    
+    # New Zealand players
+    elif player_name == "Martin Guptill":
+        if "striker" in role_name.lower():
+            return "⭐ PERFECT - Big-hitting opener, ideal choice"
+        else:
+            return "💡 POWER - Can clear boundaries easily"
+    
+    elif player_name == "Henry Nicholls":
+        if "non" in role_name.lower():
+            return "⭐ ANCHOR - Steady accumulator, perfect support"
+        else:
+            return "💡 RELIABLE - Solid technique, rarely fails"
+    
+    elif player_name == "Kane Williamson":
+        if "non" in role_name.lower():
+            return "⭐ CAPTAIN'S CLASS - Master of timing and placement"
+        elif "third" in role_name.lower():
+            return "⭐ GENIUS - Best finisher in NZ, never panics"
+        else:
+            return "💡 WORLD-CLASS - Captain's calm under pressure"
+    
+    elif player_name == "Ross Taylor":
+        if "third" in role_name.lower():
+            return "⭐ VETERAN - 20 years experience, clutch performer"
+        else:
+            return "💡 EXPERIENCED - Knows how to handle pressure"
+    
+    elif player_name == "Tom Latham":
+        if "non" in role_name.lower():
+            return "💡 KEEPER-BATSMAN - Solid technique, good support"
+        else:
+            return "💡 DEPENDABLE - Wicket-keeper with batting skills"
+    
+    elif player_name == "James Neesham":
+        if "striker" in role_name.lower():
+            return "💡 ALL-ROUNDER - Can hit big, good strike rate"
+        elif "third" in role_name.lower():
+            return "⭐ POWER-HITTER - Loves the big moments"
+        else:
+            return "💡 VERSATILE - All-rounder, can adapt to any role"
+    
+    elif player_name == "Colin de Grandhomme":
+        if "third" in role_name.lower():
+            return "💡 BIG-HITTER - Can clear boundaries when needed"
+        else:
+            return "💡 ALL-ROUNDER - Useful batting option"
+    
+    elif player_name == "Mitchell Santner":
+        return "⚠️ BOWLER FIRST - Limited batting, risky choice"
+    
+    elif player_name == "Matt Henry":
+        return "⚠️ TAIL-ENDER - Pure bowler, minimal batting"
+    
+    elif player_name == "Trent Boult":
+        return "⚠️ BOWLER - Can swing hard but very risky"
+    
+    elif player_name == "Lockie Ferguson":
+        return "⚠️ LAST RESORT - Fast bowler, can't bat"
+    
+    # Default fallback
+    return "💡 Available for selection"
+
+def get_unique_bowler_suggestion(player_name):
+    """Get unique, specific bowling suggestion for each player"""
+    
+    # England bowlers
+    if player_name == "Jofra Archer":
+        return "⭐ PACE DEMON - 95mph+ thunderbolts, intimidating"
+    
+    elif player_name == "Mark Wood":
+        return "⭐ EXPRESS PACE - Fastest in squad, 97mph missiles"
+    
+    elif player_name == "Chris Woakes":
+        return "⭐ SWING MASTER - Perfect line & length, reliable"
+    
+    elif player_name == "Liam Plunkett":
+        return "💡 DEATH SPECIALIST - Slower balls, hard to hit"
+    
+    elif player_name == "Adil Rashid":
+        return "💡 SPIN WIZARD - Leg-spin variations, unpredictable"
+    
+    elif player_name == "Ben Stokes":
+        return "💡 ALL-ROUNDER - Medium pace, can surprise batsmen"
+    
+    elif player_name == "Joe Root":
+        return "⚠️ PART-TIME - Occasional off-spin, emergency option"
+    
+    elif player_name == "Eoin Morgan":
+        return "⚠️ CAPTAIN ONLY - No bowling skills, leadership"
+    
+    elif player_name == "Jos Buttler":
+        return "⚠️ KEEPER ISSUE - Would need replacement keeper"
+    
+    elif player_name == "Jason Roy":
+        return "⚠️ BATSMAN - No bowling ability whatsoever"
+    
+    elif player_name == "Jonny Bairstow":
+        return "⚠️ BATSMAN - No bowling skills at all"
+    
+    # New Zealand bowlers
+    elif player_name == "Trent Boult":
+        return "⭐ SWING KING - Left-arm magic, deadly accurate"
+    
+    elif player_name == "Lockie Ferguson":
+        return "⭐ SPEED MACHINE - 95mph+ rockets, aggressive"
+    
+    elif player_name == "Matt Henry":
+        return "💡 SEAM BOWLER - Consistent line, good variations"
+    
+    elif player_name == "Mitchell Santner":
+        return "💡 LEFT-ARM SPIN - Tight lines, economical"
+    
+    elif player_name == "James Neesham":
+        return "💡 MEDIUM PACE - All-rounder, useful option"
+    
+    elif player_name == "Colin de Grandhomme":
+        return "💡 SWING BOWLER - Medium pace, can move ball"
+    
+    elif player_name == "Kane Williamson":
+        return "⚠️ PART-TIME - Occasional off-spin, captain first"
+    
+    elif player_name == "Ross Taylor":
+        return "⚠️ BATSMAN - No bowling ability, pure batsman"
+    
+    elif player_name == "Tom Latham":
+        return "⚠️ KEEPER ISSUE - Would need replacement keeper"
+    
+    elif player_name == "Martin Guptill":
+        return "⚠️ BATSMAN - No bowling skills whatsoever"
+    
+    elif player_name == "Henry Nicholls":
+        return "⚠️ BATSMAN - No bowling ability at all"
+    
+    # Default fallback
+    return "💡 Available for selection"
+
+
+def universal_timed_input(prompt, timeout=20, default_value=1, input_type="number", excluded_choices=None):
+    """Simplified timed input with proper countdown"""
+    if FAST_AUTOPLAY:
+        timeout=0
+    if excluded_choices is None:
+        excluded_choices = []
+    
+    print(prompt)
+    print(f"⏰ You have {timeout} seconds to decide (or we'll pick option {default_value} for you)")
+    
+    user_input = [None]  # Use list to make it mutable in nested function
+    result = [None]  # Use list to make it mutable in nested function
+    def get_input():
+        try:
+            user_input = input(prompt).strip()
+            if user_input == "":
+                result[0] = default_value
+            else:
+                if input_type == "number":
+                    result[0] = int(user_input)
+                else:
+                    result[0] = user_input
+        except (ValueError, EOFError):
+            result[0] = default_value
+        except KeyboardInterrupt:
+            result[0] = "INTERRUPT"
+    
+    # Start input thread
+    input_thread = threading.Thread(target=get_input)
+    input_thread.daemon = True
+    input_thread.start()
+    
+    # Wait for input or timeout
+    input_thread.join(timeout)
+    
+    if input_thread.is_alive():
+        # Timeout occurred
+        print(f"\n⏰ Time's up! Auto-selecting: {default_value}")
+        result[0] = default_value
+    
+    if result[0] == "INTERRUPT":
+        raise KeyboardInterrupt
+    
+    return result[0] if result[0] is not None else default_value
+
+def timed_yes_no_input(prompt, timeout=15, default_value='y'):
+    if FAST_AUTOPLAY:
+        timeout=0
+    """Timed yes/no input for game restart"""
+    try:
+        response = universal_timed_input(
+            f"\n{prompt}\nType Y or y for Yes, any other key for No [Auto-restart in {timeout}s]: ",
+            timeout=timeout,
+            default_value=default_value,
+            input_type="string"
+        )
+        return str(response).lower() == 'y'
+    except KeyboardInterrupt:
+        print(f"\n\n🚫 Game interrupted by user. Exiting...")
+        sys.exit()
+
+def get_smart_default(team_name, role_key, excluded_choices):
+    """Get smart default suggestion for player selection"""
+    team_config = TEAM_CONFIGS.get(team_name, {})
+    smart_defaults = team_config.get("smart_defaults", {})
+    
+    # Get the suggested choice for this role
+    suggested_choice = smart_defaults.get(role_key, 1)
+    
+    # If suggested choice is already selected, find next best option
+    if suggested_choice in excluded_choices:
+        # Find alternative based on role type
+        alternatives = smart_defaults.get(f"{role_key}_alternatives", [])
+        for alt in alternatives:
+            if alt not in excluded_choices:
+                return alt
+        
+        # If no alternatives, find any available choice
+        for i in range(1, 12):
+            if i not in excluded_choices:
+                return i
+    
+    return suggested_choice
+
+def get_player_name_from_choice(choice, team_type):
+    """Get player name from choice number"""
+    if team_type == "batting":
+        if 1 <= choice <= len(batting_team_squad):
+            return batting_team_squad[choice - 1]
+    else:
+        if 1 <= choice <= len(bowling_team_squad):
+            return bowling_team_squad[choice - 1]
+    return "Unknown Player"
+def get_suggestion_reason(team_name, role_key, player_name):
+    """Get reason for the suggestion"""
+    player_stats = COMPLETE_PLAYER_STATS.get(player_name, {})
+    player_type = player_stats.get("player_type", "unknown")
+    is_captain = player_stats.get("is_captain", False)
+    is_keeper = player_stats.get("is_wicket_keeper", False)
+    
+    if "striker" in role_key.lower():
+        return "Aggressive opener, good for strike rotation"
+    elif "non_striker" in role_key.lower():
+        return "Solid technique, reliable partner"
+    elif "third" in role_key.lower():
+        return "Finisher, can handle pressure"
+    elif "bowler" in role_key.lower():
+        if player_type == "bowler":
+            return "Specialist bowler, best option"
+        elif player_type == "all_rounder":
+            return "All-rounder, good bowling option"
+        else:
+            return "Can bowl if needed"
+    
+    return "Good choice for this role"
+# Enhanced validation with smart suggestions
+def validate_user_choice_with_suggestions(role_name, team_name, selected_choices=None):
+    """Enhanced validation with helpful suggestions"""
+    global user_choice
+    global team_display_ind
+    
+    if selected_choices is None:
+        selected_choices = []
+    
+    choice_accepted = False
+    
+    while not choice_accepted:
+        if team_display_ind != "N":
+            team_diplay()
+        
+        # FIXED: Better role key mapping
+        role_key = role_name.lower()
+        
+        if "striker end" in role_key:
+            role_key = "striker"
+            team_type = "batting"
+        elif "non striker end" in role_key or "non-striker end" in role_key:
+            role_key = "non_striker"
+            team_type = "batting"
+        elif "third" in role_key:
+            role_key = "third"
+            team_type = "batting"
+        elif "bowler" in role_key:
+            role_key = "bowler"
+            team_type = "bowling"
+        elif "keeper" in role_key:
+            role_key = "keeper"
+            team_type = "bowling"
+        else:
+            role_key = "third"
+            team_type = "batting"
+        
+        smart_suggestion = get_smart_default(team_name, role_key, selected_choices)
+        player_name = get_player_name_from_choice(smart_suggestion, team_type)
+        reason = get_suggestion_reason(team_name, role_key, player_name)
+        
+        # Enhanced prompt with player name and reason in one line
+        prompt_text = f"\nSelect your {role_name} for {team_name}:\n💡 Our suggestion: Option {smart_suggestion} - {player_name} - {reason}"
+        
+        user_choice = universal_timed_input(
+            prompt_text,
+            timeout=20,
+            default_value=smart_suggestion,
+            input_type="number",
+            excluded_choices=selected_choices
+        )
+        
+        if 1 <= user_choice <= 11:
+            if user_choice in selected_choices:
+                print(f'\n❌ {role_name} already selected, let us suggest another option...')
+                continue
+            choice_accepted = True
+        else:
+            print('❌ Invalid choice, let us help you pick again...')
 def get_delivery_outcome(balls_remaining, runs_needed=0, recent_runs=0, balls_since_boundary=0, wickets_in_hand=0, recent_balls_runs=[], current_total=0, wicket_fell_last_ball=False, boundary_this_over=False, innings=1, current_batsman="Unknown", current_bowler="Unknown"):
     """    BALANCED strategy - making both innings competitive
     """
@@ -213,6 +984,21 @@ def get_delivery_outcome(balls_remaining, runs_needed=0, recent_runs=0, balls_si
         6: 7,   # Six runs
         7: 5    # Wide
     }
+
+
+    if innings == 1:  # England batting first
+        # Make it slightly harder to score big
+        base_weights[4] = 10  # Reduce boundaries
+        base_weights[6] = 5   # Reduce sixes
+        base_weights[5] = 10  # Increase wicket chance
+        base_weights[0] = 28  # Increase dots
+    else:  # New Zealand chasing
+        # Make it slightly easier to chase
+        base_weights[4] = 14  # Increase boundaries
+        base_weights[6] = 9   # Increase sixes
+        base_weights[5] = 6   # Reduce wicket chance
+        base_weights[0] = 22  # Reduce dots
+
     
     # Copy base weights to modify
     outcome_weights = base_weights.copy()
@@ -567,7 +1353,7 @@ def delivery_loading():
         for index, char in enumerate(loading_string):
             sys.stdout.write(char)
             sys.stdout.flush()
-            time.sleep(1.0 / loading_speed)
+            smart_sleep(1.0 / loading_speed)
         index += 1
         sys.stdout.write("\b" * index + " " * index + "\b" * index)
         sys.stdout.flush()
@@ -578,7 +1364,7 @@ def load_countdown():
     count = 10
     global innings
     while (count >= 0):
-        time.sleep(1)
+        smart_sleep(1)
         if (count == 0):
             if (innings == 1):
                 print("LET'S PLAY !!!! \n".center(100))
@@ -618,33 +1404,88 @@ def validate_user_choice(user_input):
             user_input = int(input('\n Incorrect Choice entered, Please retry\n'))
 
 def validate_user_choice_new(role_name, team_name):
-    """Enhanced user input validation with better error handling"""
+    """Enhanced validation with proper team displays and timeout"""
     global user_choice
-    global team_display_ind
+    
     choice_accepted = False
-    while (choice_accepted != True):
-        if (team_display_ind != "N"):
-            team_diplay()
+    
+    while not choice_accepted:
         try:
-            user_choice = int(input("\nPlease enter your choice of {} for {}:\n".format(role_name, team_name)))
-            if (user_choice <= 11 and user_choice >= 1):
-                if (batsmen_selection_done == False):
-                    if (user_choice in selected_batsmen):
-                        print("Incorrect choice entered for {} for {}\n".format(role_name, team_name))
-                        team_display_ind = "Y"
-                    else:
-                        choice_accepted = True
+            # Show appropriate display based on role
+            if "Bowler" in role_name:
+                display_bowling_team_for_selection()
+                max_choice = len(bowling_team_squad)
+                
+                # Get suggested bowler (first bowler in list)
+                suggested_choice = 1
+                for i, player in enumerate(bowling_team_squad):
+                    player_stats = COMPLETE_PLAYER_STATS.get(player, {})
+                    if player_stats.get("player_type") == "bowler":
+                        suggested_choice = i + 1
+                        break
+                
+                player_name = get_player_name_from_choice(suggested_choice, "bowling")
+                reason = get_suggestion_reason(team_name, "bowler", player_name)
+                
+                prompt_text = f"\n💡 Our suggestion: Option {suggested_choice} - {player_name} - {reason}"
+                
+                user_choice = universal_timed_input(
+                    prompt_text,
+                    timeout=20,
+                    default_value=suggested_choice,
+                    input_type="number"
+                )
+            else:
+                # For batsmen, show batting team with selection indicators
+                display_batting_team_for_selection(role_name, selected_batsmen)
+                max_choice = len(batting_team_squad)
+                
+                # Get suggested batsman (first available batsman)
+                suggested_choice = 1
+                for i, player in enumerate(batting_team_squad):
+                    if (i + 1) not in selected_batsmen:
+                        player_stats = COMPLETE_PLAYER_STATS.get(player, {})
+                        if player_stats.get("player_type") in ["batsman", "all_rounder"]:
+                            suggested_choice = i + 1
+                            break
+                
+                # If no batsman found, find any available player
+                if suggested_choice in selected_batsmen:
+                    for i in range(len(batting_team_squad)):
+                        if (i + 1) not in selected_batsmen:
+                            suggested_choice = i + 1
+                            break
+                
+                player_name = get_player_name_from_choice(suggested_choice, "batting")
+                reason = get_suggestion_reason(team_name, role_name.lower(), player_name)
+                
+                prompt_text = f"\n💡 Our suggestion: Option {suggested_choice} - {player_name} - {reason}"
+                
+                user_choice = universal_timed_input(
+                    prompt_text,
+                    timeout=20,
+                    default_value=suggested_choice,
+                    input_type="number",
+                    excluded_choices=selected_batsmen
+                )
+            
+            # Validate the choice
+            if 1 <= user_choice <= max_choice:
+                # For batsmen, check if already selected
+                if "Bowler" not in role_name and user_choice in selected_batsmen:
+                    print(f"\n❌ ERROR: Player already selected! Please choose a different player.")
+                    smart_sleep(2)
+                    continue
                 else:
                     choice_accepted = True
+                    print(f"\n✅ Valid selection: {user_choice}")
             else:
-                print("Incorrect choice entered for {} for {}\n".format(role_name, team_name))
-                team_display_ind = "Y"
-        except ValueError:
-            print("Incorrect choice entered for {} for {}\n".format(role_name, team_name))
-            team_display_ind = "Y"
-
-# 
-
+                print(f"\n❌ ERROR: Please enter a number between 1 and {max_choice}")
+                smart_sleep(2)
+                
+        except (ValueError, TypeError):
+            print(f"\n❌ ERROR: Please enter a valid number between 1 and {max_choice}")
+            smart_sleep(2)
 
 def team_diplay():
     """Display team squads for player selection"""
@@ -755,11 +1596,11 @@ def loading_screen():
 
     print("\n***************************************************************************************XXXXXXXXXX ********************************************************************\n")
 
-    time.sleep(30)
+    smart_sleep(30)
     print("\nNow lets get started with the game\n")
     print("\n\n\n")
     delivery_loading()
-    time.sleep(2)
+    smart_sleep(2)
     clear()
 
 # Initialize global variables
@@ -778,8 +1619,8 @@ first_innings_wickets = 0
 # Start the game
 loading_screen()
 
-# Main game loop
-while (1 == 1):
+# Main game loop with proper restart logic
+while True:
     Target = 999999  # Initialize target for first innings
 
     # Game introduction
@@ -787,45 +1628,58 @@ while (1 == 1):
           "\nIn an interesting turn of events after 50 Overs both teams stand equal in terms of runs Scored \n"
           "NZL batting first Scored 241/8 \t in reply ENG chasing got all out for 241 \n")
 
-    time.sleep(5)
+    smart_sleep(5)
 
     print('It is now time for the Super Over to break the tie in this Cricket World Cup 2019 Final \n')
 
-    time.sleep(5)
+    smart_sleep(5)
 
     innings = 1  # Start with first innings
+
 
     # Play both innings
     while (innings <= 2):
 
-        time.sleep(5)
-        team_diplay()
+        smart_sleep(5)
+        team_diplay()  # Initialize teams and show header
         team_display_ind = 'N'
 
         batsmen_selection_done = True
+        # Player selection phase with optimized displays
         selected_batsmen = []
 
-        # Player selection phase
-        validate_user_choice_new('Opening Batsmen at Striker End', Batting_Team_Name)
+        # Strike Batsman Selection
+        print("\n🏏 PLAYER SELECTION PHASE")
+        print("=" * 50)
+        
+        validate_user_choice_with_display('Opening Batsmen at Striker End', Batting_Team_Name, selected_batsmen)
         strike_batsman = batting_team_squad[int(user_choice) - 1]
-        print('{} is chosen as the Strike Batsmen for {} \n'.format(strike_batsman, Batting_Team_Name))
+        print(f'\n✅ {strike_batsman} is chosen as the Strike Batsman for {Batting_Team_Name}')
         selected_batsmen.append(user_choice)
         batsmen_selection_done = False
+        smart_sleep(2)
 
-        validate_user_choice_new('Opening Batsmen at Non Striker End', Batting_Team_Name)
+        # Non-Strike Batsman Selection  
+        validate_user_choice_with_display('Opening Batsmen at Non Striker End', Batting_Team_Name, selected_batsmen)
         non_strike_batsman = batting_team_squad[int(user_choice) - 1]
-        print('{} is chosen as the Non-strike Batsmen for {} \n'.format(non_strike_batsman, Batting_Team_Name))
+        print(f'\n✅ {non_strike_batsman} is chosen as the Non-Strike Batsman for {Batting_Team_Name}')
         selected_batsmen.append(user_choice)
+        smart_sleep(2)
 
-        validate_user_choice_new('Third Batsmen', Batting_Team_Name)
+        # Third Batsman Selection
+        validate_user_choice_with_display('Third Batsmen', Batting_Team_Name, selected_batsmen)
         third_batsman = batting_team_squad[int(user_choice) - 1]
-        print('{} is chosen as the Third Batsmen for {} \n'.format(third_batsman, Batting_Team_Name))
+        print(f'\n✅ {third_batsman} is chosen as the Third Batsman for {Batting_Team_Name}')
         batsmen_selection_done = True
         selected_batsmen.clear()
+        smart_sleep(2)
 
-        # REPLACE the existing bowler selection with:
+        # Bowler Selection
+        print(f"\n🏏 Now selecting bowler for {Bowling_Team_Name}...")
+        smart_sleep(1)
+        
         while True:
-            validate_user_choice_new('Opening Bowler', Bowling_Team_Name)
+            validate_user_choice_with_display('Opening Bowler', Bowling_Team_Name)
             selected_bowler = bowling_team_squad[int(user_choice) - 1]
             
             # Handle wicket-keeper scenario
@@ -833,17 +1687,22 @@ while (1 == 1):
             
             if keeper_for_innings is not None:
                 bowler_one_name = selected_bowler
-                print(f"\n🏏 Super Over Setup:")
-                print(f"Bowler: {bowler_one_name}")
-                print(f"Wicket-keeper: {keeper_for_innings}")
-                print(f"Captain: {TEAM_CONFIGS[Bowling_Team_Name]['captain']} (unchanged)")
+                print(f"\n🏏 Super Over Setup Complete:")
+                print(f"\n")
+                print(f"✅ Strike Batsman: {strike_batsman}")
+                print(f"✅ Non-Strike Batsman: {non_strike_batsman}")
+                print(f"✅ Third Batsman: {third_batsman}")
+                print(f"✅ Batting Team Captain: {TEAM_CONFIGS[Batting_Team_Name]['captain']} ")
+                print(f"\n")
+                print(f"✅ Bowler: {bowler_one_name}")
+                print(f"✅ Wicket-keeper: {keeper_for_innings}")
+                print(f"✅ Fielding Team Captain: {TEAM_CONFIGS[Bowling_Team_Name]['captain']} ")
+                print(f"\n")
+                smart_sleep(3)
                 break
             else:
-                print("Please select a different bowler.")
-
-        # validate_user_choice_new('Opening Bowler', Bowling_Team_Name)
-        # bowler_one_name = bowling_team_squad[int(user_choice) - 1]
-        # print('{} is chosen as the Super Over Bowler for {} \n'.format(bowler_one_name, Bowling_Team_Name))
+                print("❌ Please select a different bowler.")
+                smart_sleep(2)
 
         # Initialize batting lineup
         batting_lineup = [
@@ -857,9 +1716,9 @@ while (1 == 1):
         batsman_three_status = "DNB"
 
         print("Innings #{} of the Super Over coming up. \n".format(innings))
-        time.sleep(2)
+        smart_sleep(2)
         load_countdown()
-        time.sleep(2)
+        smart_sleep(2)
 
         print("{} Steaming in to bowl to {}\n".format(bowler_one_name, strike_batsman))
 
@@ -883,9 +1742,9 @@ while (1 == 1):
 
         # Add suspense before the first ball
         print("Here comes the first ball of the Super Over...")
-        time.sleep(2)
+        smart_sleep(2)
         delivery_loading()
-        time.sleep(1)
+        smart_sleep(1)
 
         while balls_bowled < 6 and bowling_team_wickets < 2:
 
@@ -1117,9 +1976,9 @@ while (1 == 1):
             
             # Add suspense and delivery loading for match-ending scenarios
             if match_ended:
-                time.sleep(3)
+                smart_sleep(3)
                 delivery_loading()
-                time.sleep(2)
+                smart_sleep(2)
                 break
                 
             # Keep only last 3 balls for pressure calculation
@@ -1127,9 +1986,9 @@ while (1 == 1):
                 recent_balls_runs = recent_balls_runs[-3:]
             if delivery_result != 7:
                 ball_no += 1
-            time.sleep(2)
+            smart_sleep(2)
             delivery_loading()
-            time.sleep(1)
+            smart_sleep(1)
 
         # End of innings summary
         print("\n" + "="*80)
@@ -1173,7 +2032,7 @@ while (1 == 1):
             first_innings_wickets = bowling_team_wickets
             Target = batting_team_total_score + 1
             print("\n{} needs {} runs to win from their Super Over!".format(Bowling_Team_Name, Target))
-            time.sleep(5)
+            smart_sleep(5)
         
         # Reset variables for next innings
         boundary_this_over = False
@@ -1190,7 +2049,7 @@ while (1 == 1):
             print("{} scored: {}/{}".format(Batting_Team_Name, batting_team_total_score, bowling_team_wickets))
             print("{} needs {} runs to win!".format(Bowling_Team_Name, Target))
             print("\nPreparing for the second innings...")
-            time.sleep(5)
+            smart_sleep(5)
             
         else:
             # Match conclusion
@@ -1199,7 +2058,21 @@ while (1 == 1):
             print("MATCH RESULT".center(100))
             print("="*100)
             
+            # Determine scores for logging
+            if innings == 3:  # After second innings
+                if Batting_Team_Name == "England":
+                    eng_score = batting_team_total_score
+                    eng_wickets = bowling_team_wickets
+                    nz_score = first_innings_score
+                    nz_wickets = first_innings_wickets
+                else:
+                    nz_score = batting_team_total_score
+                    nz_wickets = bowling_team_wickets
+                    eng_score = first_innings_score
+                    eng_wickets = first_innings_wickets
+            
             if batting_team_total_score >= Target:
+                winner = Batting_Team_Name
                 print("\n🏆 {} HAS WON THE MATCH! 🏆".format(Batting_Team_Name).center(100))
                 print("They are the Champions of the Cricket World Cup 2019!".center(100))
                 print("\nMatch Summary:")
@@ -1212,94 +2085,129 @@ while (1 == 1):
                 ))
                 
             elif batting_team_total_score == Target - 1:
+                # Handle tie scenario
+                winner = "TIE"
                 print("\n🤯 UNBELIEVABLE! THE SUPER OVER ALSO ENDS IN A TIE! 🤯".center(100))
                 print("This is unprecedented in cricket history!".center(100))
                 print("\nAs per ICC rules, the team with more boundaries in the main match wins...")
                 print("England scored 26 boundaries vs New Zealand's 17 boundaries in the 50-over match")
-                print("\n🏆 {} WINS ON BOUNDARY COUNT-BACK RULE! 🏆".format(Bowling_Team_Name).center(100))
+                
+                # In the actual 2019 final, England won on boundary count
+                if Bowling_Team_Name == "England":
+                    winner = "England (Boundary Count)"
+                    print("\n🏆 {} WINS ON BOUNDARY COUNT-BACK RULE! 🏆".format("England").center(100))
+                else:
+                    winner = "New Zealand (Boundary Count)"
+                    print("\n🏆 {} WINS ON BOUNDARY COUNT-BACK RULE! 🏆".format("New Zealand").center(100))
+                
                 print("They are the Champions of the Cricket World Cup 2019!".center(100))
                 print("\nThis will go down as one of the most dramatic finals in cricket history!")
                 
             else:
+                winner = Bowling_Team_Name
                 print("\n🏆 {} HAS WON THE MATCH! 🏆".format(Bowling_Team_Name).center(100))
                 print("They are the Champions of the Cricket World Cup 2019!".center(100))
                 print("\nMatch Summary:")
-                print("First Innings: {} scored {}/{}".format(Bowling_Team_Name, Target-1, first_innings_wickets))
+                print("First Innings: {} scored {}/{}".format(first_innings_team, first_innings_score, first_innings_wickets))
                 print("Second Innings: {} scored {}/{} (Target: {})".format(Batting_Team_Name, batting_team_total_score, bowling_team_wickets, Target))
                 print("\n{} won by {} runs!".format(
                     Bowling_Team_Name, 
                     (Target - 1) - batting_team_total_score
                 ))
 
+            # Log the match result to CSV
+            try:
+                log_match_result(eng_score, eng_wickets, nz_score, nz_wickets, winner)
+            except Exception as e:
+                print(f"\n⚠️ Note: Could not save match result to file: {e}")
+                print("Game will continue normally.")
+
+            break
+
     # Game replay option
     print("\n" + "="*80)
     print("GAME OVER".center(80))
     print("="*80)
     
-    game_over = input('\nDo you want to Play again?\nType Y or y for Yes, any other key for No: ')
-    
-    if game_over.lower() == 'y':
-        print("\n🔄 Restarting the Game... Please wait! 🔄")
-        print("Setting up new match...")
-        time.sleep(3)
-        print("Loading teams...")
-        time.sleep(2)
-        print("Preparing pitch...")
-        time.sleep(2)
-        clear()
+    # Use the timed input function for restart decision
+    try:
+        restart_game = timed_yes_no_input(
+            "🎮 Do you want to play another match?", 
+            timeout=20, 
+            default_value='y'
+        )
         
-        # Reset all global variables for new game
-        innings = 1
-        Target = 999999
-        user_choice = 0
-        team_display_ind = 'N'
-        batsmen_selection_done = True
-        selected_batsmen = []
-        batting_team_squad = []
-        bowling_team_squad = []
-        Batting_Team_Name = ''
-        Bowling_Team_Name = ''
-        first_innings_wickets = 0
-        
-        print("🏏 NEW MATCH STARTING! 🏏".center(80))
-        print("Welcome back to the Cricket World Cup 2019 Finals!")
-        time.sleep(2)
-        
-    else:
-        print("\n" + "="*80)
-        print("THANK YOU FOR PLAYING!".center(80))
-        print("="*80)
-        print("\n🏏 Hope you enjoyed this thrilling cricket experience! 🏏")
-        print("\nThis game recreated one of the most dramatic moments in cricket history.")
-        print("The 2019 Cricket World Cup Final between England and New Zealand")
-        print("will forever be remembered as one of the greatest matches ever played.")
-        
-        print("\n📧 Send your comments and suggestions to:")
-        print("Anuj Puranik - anuj87in@gmail.com")
-        
-        print("\n🙏 Thank you for playing!")
-        print("We look forward to your company next time.")
-        print("Goodbye and keep playing cricket! 🏏")
-        
-        # Final loading animation before exit
-        print("\nClosing game...")
-        time.sleep(3)
-        delivery_loading()
-        time.sleep(2)
-        clear()
-        
-        # Final farewell message
-        print("\n" + "="*60)
-        print("CRICKET WORLD CUP 2019 FINAL SIMULATOR".center(60))
-        print("Created by: Anuj Puranik".center(60))
-        print("="*60)
-        print("\n🏆 Thanks for reliving cricket history! 🏆")
-        time.sleep(5)
-        break
+        if restart_game:
+            print("\n🔄 Restarting the Game... Please wait! 🔄")
+            print("Setting up new match...")
+            smart_sleep(3)
+            print("Loading teams...")
+            smart_sleep(2)
+            print("Preparing pitch...")
+            smart_sleep(2)
+            clear()
+            
+            # Reset all global variables for new game
+            innings = 1
+            Target = 999999
+            user_choice = 0
+            team_display_ind = 'N'
+            batsmen_selection_done = True
+            selected_batsmen = []
+            batting_team_squad = []
+            bowling_team_squad = []
+            Batting_Team_Name = ''
+            Bowling_Team_Name = ''
+            first_innings_wickets = 0
+            
+            print("🏏 NEW MATCH STARTING! 🏏".center(80))
+            smart_sleep(2)
+            continue  # Continue to next iteration of main game loop
+            
+        else:
+            # User chose not to restart - exit the game
+            print(f"\n✅ Exiting game...")
+            print("\n" + "="*80)
+            print("THANK YOU FOR PLAYING!".center(80))
+            print("="*80)
+            print("\n🏏 Hope you enjoyed this thrilling cricket experience! 🏏")
+            print("\nThis game recreated one of the most dramatic moments in cricket history.")
+            print("The 2019 Cricket World Cup Final between England and New Zealand")
+            print("will forever be remembered as one of the greatest matches ever played.")
+            
+            print("\n📧 Send your comments and suggestions to:")
+            print("Anuj Puranik - anuj87in@gmail.com")
+            
+            print("\n🙏 Thank you for playing!")
+            print("We look forward to your company next time.")
+            print("Goodbye and keep playing cricket! 🏏")
+            
+            # Final loading animation before exit
+            print("\nClosing game...")
+            smart_sleep(3)
+            delivery_loading()
+            smart_sleep(2)
+            clear()
+            
+            # Final farewell message
+            print("\n" + "="*60)
+            print("CRICKET WORLD CUP 2019 FINAL SIMULATOR".center(60))
+            print("Created by: Anuj Puranik".center(60))
+            print("="*60)
+            print("\n🏆 Thanks for reliving cricket history! 🏆")
+            smart_sleep(5)
+            
+            # EXIT THE MAIN GAME LOOP
+            break  # This will exit the while (1 == 1) loop
+            
+    except KeyboardInterrupt:
+        print("\n\n🛑 Game interrupted by user. Goodbye!")
+        break  # Exit the main loop
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        print("Exiting game due to error...")
+        break  # Exit the main loop
 
-# End of main game loop
+# End of main game loop - this should be OUTSIDE the while loop
 print("\nGame terminated successfully.")
 sys.exit(0)
-
-    
-    

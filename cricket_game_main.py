@@ -3,13 +3,13 @@ import random
 import time
 import sys
 import threading
-import time
 import csv
 from datetime import datetime
+from win_predictor import WinPredictor
 
 '''
 CRICKET GAME ENHANCEMENTS:
-1. No Balls (+ Free hit )
+1. No Balls (+ Free hit )1
 2. Wides ( + Byes ) ✓ IMPLEMENTED
 3. More dismissals ✓ IMPLEMENTED (Bowled, Caught, LBW, Run-out)
 4. More commentary ✓ ENHANCED
@@ -24,6 +24,9 @@ CRICKET GAME ENHANCEMENTS:
 '''
 
 
+
+# Initialize predictor once
+WIN_PREDICTOR = WinPredictor()
 
 # GLOBAL PLAYER STATS AND TEAM CONFIGURATIONS
 COMPLETE_PLAYER_STATS = {
@@ -798,49 +801,132 @@ def get_unique_bowler_suggestion(player_name):
 
 
 def universal_timed_input(prompt, timeout=20, default_value=1, input_type="number", excluded_choices=None):
-    """Simplified timed input with proper countdown"""
+    """Timed input without background threads on Windows to prevent prompt spillage."""
     if FAST_AUTOPLAY:
-        timeout=0
+        timeout = 0
     if excluded_choices is None:
         excluded_choices = []
-    
+
     print(prompt)
     print(f"⏰ You have {timeout} seconds to decide (or we'll pick option {default_value} for you)")
-    
-    user_input = [None]  # Use list to make it mutable in nested function
-    result = [None]  # Use list to make it mutable in nested function
-    def get_input():
+
+    # Windows: use msvcrt to avoid background input threads
+    if os.name == 'nt':
         try:
-            user_input = input(prompt).strip()
-            if user_input == "":
-                result[0] = default_value
-            else:
-                if input_type == "number":
-                    result[0] = int(user_input)
+            import msvcrt
+        except Exception:
+            msvcrt = None
+        if msvcrt is not None:
+            buffer = ""
+            start_time = time.time()
+            while True:
+                # Timeout check
+                if timeout is not None and (time.time() - start_time) >= timeout:
+                    print(f"\n⏰ Time's up! Auto-selecting: {default_value}")
+                    return default_value
+
+                # Read keystrokes if available
+                if msvcrt.kbhit():
+                    ch = msvcrt.getwche()
+                    if ch in ('\r', '\n'):
+                        print("")
+                        entered = buffer.strip()
+                        if entered == "":
+                            return default_value
+                        try:
+                            if input_type == "number":
+                                return int(entered)
+                            return entered
+                        except ValueError:
+                            return default_value
+                    elif ch == '\b':
+                        if len(buffer) > 0:
+                            buffer = buffer[:-1]
+                            sys.stdout.write('\b \b')
+                            sys.stdout.flush()
+                    else:
+                        buffer += ch
+                time.sleep(0.05)
+
+    # POSIX single-threaded path (Linux/macOS)
+    try:
+        import select  # type: ignore
+        import termios  # type: ignore
+        import tty  # type: ignore
+
+        if sys.stdin.isatty():
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                buffer = ""
+                deadline = time.time() + (timeout or 0)
+                while True:
+                    if timeout is not None:
+                        remaining = deadline - time.time()
+                        if remaining <= 0:
+                            print(f"\n⏰ Time's up! Auto-selecting: {default_value}")
+                            return default_value
+                    else:
+                        remaining = 0.05
+
+                    rlist, _, _ = select.select([sys.stdin], [], [], max(0.0, remaining))
+                    if rlist:
+                        ch = sys.stdin.read(1)
+                        if ch in ('\r', '\n'):
+                            print("")
+                            entered = buffer.strip()
+                            if entered == "":
+                                return default_value
+                            try:
+                                if input_type == "number":
+                                    return int(entered)
+                                return entered
+                            except ValueError:
+                                return default_value
+                        elif ch in ('\x7f', '\b'):
+                            if len(buffer) > 0:
+                                buffer = buffer[:-1]
+                                sys.stdout.write('\b \b')
+                                sys.stdout.flush()
+                        else:
+                            buffer += ch
+                            sys.stdout.write(ch)
+                            sys.stdout.flush()
+                    else:
+                        # No input yet; loop to check timeout
+                        pass
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        else:
+            raise RuntimeError("stdin not a tty")
+    except Exception:
+        # Fallback: previous threaded approach when POSIX APIs unavailable
+        result = [None]
+        def get_input():
+            try:
+                val = input(prompt).strip()
+                if val == "":
+                    result[0] = default_value
                 else:
-                    result[0] = user_input
-        except (ValueError, EOFError):
-            result[0] = default_value
-        except KeyboardInterrupt:
-            result[0] = "INTERRUPT"
-    
-    # Start input thread
-    input_thread = threading.Thread(target=get_input)
-    input_thread.daemon = True
-    input_thread.start()
-    
-    # Wait for input or timeout
-    input_thread.join(timeout)
-    
-    if input_thread.is_alive():
-        # Timeout occurred
-        print(f"\n⏰ Time's up! Auto-selecting: {default_value}")
-        result[0] = default_value
-    
-    if result[0] == "INTERRUPT":
-        raise KeyboardInterrupt
-    
-    return result[0] if result[0] is not None else default_value
+                    result[0] = int(val) if input_type == "number" else val
+            except (ValueError, EOFError):
+                result[0] = default_value
+            except KeyboardInterrupt:
+                result[0] = "INTERRUPT"
+
+        input_thread = threading.Thread(target=get_input)
+        input_thread.daemon = True
+        input_thread.start()
+        input_thread.join(timeout)
+
+        if input_thread.is_alive():
+            print(f"\n⏰ Time's up! Auto-selecting: {default_value}")
+            return default_value
+
+        if result[0] == "INTERRUPT":
+            raise KeyboardInterrupt
+        return result[0] if result[0] is not None else default_value
 
 def timed_yes_no_input(prompt, timeout=15, default_value='y'):
     if FAST_AUTOPLAY:
@@ -1623,6 +1709,10 @@ loading_screen()
 while True:
     Target = 999999  # Initialize target for first innings
 
+    # Reset predictor state for this match
+    pre_first_probs = None  # tuple: (team1, p1, team2, p2)
+    pre_second_probs = None  # tuple: (team1, p1, team2, p2)
+
     # Game introduction
     print("Welcome to the Cricket World Cup 2019 Finals\n"
           "\nIn an interesting turn of events after 50 Overs both teams stand equal in terms of runs Scored \n"
@@ -1716,6 +1806,29 @@ while True:
         batsman_three_status = "DNB"
 
         print("Innings #{} of the Super Over coming up. \n".format(innings))
+        # Show prediction before the first ball of this innings
+        if innings == 1:
+            try:
+                p_bat = WIN_PREDICTOR.predict_before_first(Batting_Team_Name)
+                p_bowl = 1.0 - p_bat
+                print("\n🔮 Pre-match win odds: {} {:.1f}% | {} {:.1f}%".format(
+                    Batting_Team_Name, p_bat * 100.0, Bowling_Team_Name, p_bowl * 100.0))
+                pre_first_probs = (Batting_Team_Name, p_bat, Bowling_Team_Name, p_bowl)
+            except Exception as _:
+                pass
+        elif innings == 2:
+            try:
+                # Use first innings summary for conditional odds
+                p_first, p_second = WIN_PREDICTOR.predict_before_second(first_innings_team, first_innings_score, first_innings_wickets)
+                if first_innings_team == "England":
+                    first_team, second_team = "England", "New Zealand"
+                else:
+                    first_team, second_team = "New Zealand", "England"
+                print("\n🔮 Pre-2nd innings win odds (target {}): {} {:.1f}% | {} {:.1f}%".format(
+                    Target, first_team, p_first * 100.0, second_team, p_second * 100.0))
+                pre_second_probs = (first_team, p_first, second_team, p_second)
+            except Exception as _:
+                pass
         smart_sleep(2)
         load_countdown()
         smart_sleep(2)
@@ -2115,6 +2228,35 @@ while True:
                     (Target - 1) - batting_team_total_score
                 ))
 
+            # Predictor evaluation
+            try:
+                def _norm_team(name: str) -> str:
+                    n = name.lower()
+                    if "england" in n:
+                        return "England"
+                    if "new zealand" in n:
+                        return "New Zealand"
+                    if "tie" in n:
+                        return "TIE"
+                    return name
+
+                actual_winner = _norm_team(winner)
+                print("\n📊 Predictor evaluation:")
+
+                if pre_first_probs is not None:
+                    t1, p1, t2, p2 = pre_first_probs
+                    pick = t1 if p1 > p2 else (t2 if p2 > p1 else "None")
+                    status = "N/A (tie)" if actual_winner == "TIE" else ("✅ Correct" if pick == actual_winner else ("N/A (50-50)" if pick == "None" else "❌ Incorrect"))
+                    print(" - Before 1st innings: {} {:.1f}% | {} {:.1f}% -> {}".format(t1, p1*100.0, t2, p2*100.0, status))
+
+                if pre_second_probs is not None:
+                    t1, p1, t2, p2 = pre_second_probs
+                    pick = t1 if p1 > p2 else (t2 if p2 > p1 else "None")
+                    status = "N/A (tie)" if actual_winner == "TIE" else ("✅ Correct" if pick == actual_winner else ("N/A (50-50)" if pick == "None" else "❌ Incorrect"))
+                    print(" - Before 2nd innings: {} {:.1f}% | {} {:.1f}% -> {}".format(t1, p1*100.0, t2, p2*100.0, status))
+            except Exception as _:
+                pass
+
             # Log the match result to CSV
             try:
                 log_match_result(eng_score, eng_wickets, nz_score, nz_wickets, winner)
@@ -2211,3 +2353,6 @@ while True:
 # End of main game loop - this should be OUTSIDE the while loop
 print("\nGame terminated successfully.")
 sys.exit(0)
+
+    
+    
